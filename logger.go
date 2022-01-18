@@ -14,7 +14,7 @@ import (
 
 const (
 	fnFmt      = "%s.%d.log"
-	fileFlags  = os.O_CREATE | os.O_APPEND
+	fileFlags  = os.O_CREATE | os.O_APPEND | os.O_RDWR
 	logTimeFmt = "2006/01/02 15:04:05 "
 )
 
@@ -52,19 +52,17 @@ func exists(fn string) bool {
 	return err == nil || !os.IsNotExist(err)
 }
 
-func getSuitableFile(logdir string, basename string, maxSize int, mode fs.FileMode) (string, error) {
+func getSuitableFile(basename string, maxSize int, mode fs.FileMode) (string, error) {
 	if maxSize < 0 {
 		return "", ErrInvalidSize
 	}
 	num := 0
 	fn := basename + ".log"
-	absPath := path.Join(logdir, fn)
 	for {
-		absPath = path.Join(logdir, fn)
-		fi, err := os.Stat(absPath)
+		fi, err := os.Stat(fn)
 		if err != nil {
 			// file doesn't exist, use it.
-			return absPath, nil
+			return fn, nil
 		}
 
 		if strings.HasSuffix(fn, ".gz") {
@@ -75,42 +73,46 @@ func getSuitableFile(logdir string, basename string, maxSize int, mode fs.FileMo
 			// file isn't too big, use this
 			break
 		}
-		if exists(absPath + ".gz") {
+		if exists(fn + ".gz") {
 			// file is already archived
 		} else {
 			// file is too big but hasn't been archived yet. Archive it and move on
-			gzipFile(absPath, mode)
+			gzipFile(fn, mode)
 		}
 		num++
 		fn = fmt.Sprintf(fnFmt, basename, num)
 	}
-	return absPath, nil
+	return fn, nil
 }
 
-// GzLog is a logging tool for writing text to log files and automatically compressing and rotating them
-// if the current log file is larger than the maxSize before writing to it to avoid having huge log files
-// that can be tedious to use for debugging
+// GzLog is a logging tool for writing text to log files and automatically compressing and
+// rotating them if the current log file is larger than the maxSize before writing to it
+// to avoid having huge log files that can be tedious to use for debugging
 type GzLog struct {
 	basename     string
 	filename     string
-	dir          string
 	file         *os.File
 	stat         os.FileInfo
 	maxSize      int64
 	externalFile bool
 }
 
-// Close cleans up the log file
+// Close cleans up the log file unless the file was created elsewhere and imported with
+// ImportFile
 func (gl *GzLog) Close() error {
-	if gl.file == nil || gl.file == os.Stdout || gl.file == os.Stderr {
+	if gl.file == nil || gl.file == os.Stdout || gl.file == os.Stderr || gl.externalFile {
 		return nil
 	}
 	return gl.file.Close()
 }
 
 // Filename returns the filename of the current log file
-func (gl *GzLog) Filename() string {
-	return gl.filename
+func (gl *GzLog) Filename(base bool) string {
+	fn := gl.filename
+	if base {
+		fn = path.Base(fn)
+	}
+	return fn
 }
 
 func (gl *GzLog) IsExternalFile() bool {
@@ -162,7 +164,9 @@ func (gl *GzLog) Println(a ...interface{}) (string, error) {
 func (gl *GzLog) writeStr(str string, rotate bool) error {
 	var err error
 	if rotate {
-		err = gl.rotate()
+		if err = gl.rotate(); err != nil {
+			return err
+		}
 	}
 	str = strings.TrimSpace(str)
 	if str == "" {
@@ -207,16 +211,15 @@ func (gl *GzLog) GZip() error {
 // rotate checks to see if the file is too big and should be archived. If it is, it archives it
 // and opens a new one
 func (gl *GzLog) rotate() error {
-	if gl.file == os.Stdout || gl.file == os.Stderr {
-		return nil
-	}
-	var err error
-	if gl.Size() < gl.maxSize || gl.maxSize == 0 {
+	if gl.file == os.Stdout || gl.file == os.Stderr || gl.Size() < gl.maxSize || gl.maxSize == 0 {
 		return nil
 	}
 	mode := gl.FileMode()
-	gl.Close()
-	gl.filename, err = getSuitableFile(gl.dir, gl.basename, int(gl.maxSize), mode)
+	err := gl.Close()
+	if err != nil {
+		return err
+	}
+	gl.filename, err = getSuitableFile(gl.basename, int(gl.maxSize), mode)
 	if err != nil {
 		return err
 	}
@@ -228,29 +231,30 @@ func (gl *GzLog) rotate() error {
 	return err
 }
 
-// OpenFile opens the log in the specified log directory and basename, creating logdir/ if it doesn't
-// exist, and creating or rotating a new log file as necessary. Do not include the extension in
-// basename, gzlog will create logdir/basename.log or logdir/basename.#.log and automatically
-// compress the log if it exceeds maxSize.
+// OpenFile opens the log in the specified log directory and basename, creating the file's
+// directory if it doesn't exist, and creating or rotating a new log file as necessary.
+// Do not include the extension in basename, gzlog will create basename.log or basename.#.log
+// and automatically compress the log if it exceeds maxSize.
 //
-// If maxSize == 0, the log will never be rotated (i.e. it will essentially have no maximum file size).
-// This defeats the purpose of this package, but I figured I may as well include it anyway
-func OpenFile(logdir string, basename string, maxSize int, fileMode fs.FileMode) (*GzLog, error) {
+// If maxSize == 0, the log will never be rotated (i.e. it will essentially have no maximum
+// file size). This defeats the purpose of this package, but I figured I may as well include
+// it anyway
+func OpenFile(basename string, maxSize int, fileMode fs.FileMode) (*GzLog, error) {
 	if maxSize < 0 {
 		return nil, ErrInvalidSize
 	}
-	err := os.Mkdir(logdir, fileMode)
+	dir := path.Dir(basename)
+	err := os.Mkdir(dir, fileMode)
 	if err != nil && !os.IsExist(err) {
 		return nil, err
 	}
-	filename, err := getSuitableFile(logdir, basename, maxSize, fileMode)
+	filename, err := getSuitableFile(basename, maxSize, fileMode)
 	if err != nil {
 		return nil, err
 	}
 	gl := &GzLog{
 		basename:     basename,
 		filename:     filename,
-		dir:          logdir,
 		maxSize:      int64(maxSize),
 		externalFile: false,
 	}
@@ -263,10 +267,10 @@ func OpenFile(logdir string, basename string, maxSize int, fileMode fs.FileMode)
 	return gl, err
 }
 
-// UseFile is similar to OpenFile, but it can use an already opened *os.File instead of
+// ImportFile is similar to OpenFile, but it can use an already opened *os.File instead of
 // loading it in this package, including os.Stdout and os.Stderr. If Stdout or Stderr
 // are used as files, the log won't be rotated or compressed
-func UseFile(file *os.File, basename string, maxSize int) (*GzLog, error) {
+func ImportFile(file *os.File, basename string, maxSize int) (*GzLog, error) {
 	if file == nil {
 		return nil, os.ErrClosed
 	}
@@ -277,14 +281,12 @@ func UseFile(file *os.File, basename string, maxSize int) (*GzLog, error) {
 	if err != nil {
 		return nil, err
 	}
-	var logDir string
 	var filename string
 	if file == os.Stdout || file == os.Stderr {
 		maxSize = 0
 		basename = ""
 	} else {
-		logDir = path.Dir(file.Name())
-		filename, err = getSuitableFile(logDir, basename, maxSize, fi.Mode())
+		filename, err = getSuitableFile(basename, maxSize, fi.Mode())
 		if err != nil {
 			return nil, err
 		}
@@ -292,7 +294,6 @@ func UseFile(file *os.File, basename string, maxSize int) (*GzLog, error) {
 	gl := &GzLog{
 		basename:     basename,
 		filename:     filename,
-		dir:          logDir,
 		file:         file,
 		maxSize:      int64(maxSize),
 		stat:         fi,
