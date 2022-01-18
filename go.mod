@@ -1,3 +1,3 @@
-module github.com/gochan-org/logzip
+module github.com/gochan-org/gzlog
 
 go 1.17
