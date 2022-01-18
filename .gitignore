@@ -12,3 +12,5 @@
 
 # log directories for unit testing
 logs/
+*.log
+*.log.*
