@@ -4,7 +4,6 @@ import (
 	"compress/gzip"
 	"errors"
 	"fmt"
-	"io/fs"
 	"io/ioutil"
 	"os"
 	"path"
@@ -27,7 +26,7 @@ func getPrefix() string {
 	return prefix
 }
 
-func gzipFile(fn string, mode fs.FileMode) error {
+func gzipFile(fn string, mode os.FileMode) error {
 	gzPath := fn + ".gz"
 	file, err := os.OpenFile(gzPath, os.O_WRONLY|os.O_CREATE, mode)
 	if err != nil {
@@ -52,7 +51,7 @@ func exists(fn string) bool {
 	return err == nil || !os.IsNotExist(err)
 }
 
-func getSuitableFile(basename string, maxSize int, mode fs.FileMode) (string, error) {
+func getSuitableFile(basename string, maxSize int, mode os.FileMode) (string, error) {
 	if maxSize < 0 {
 		return "", ErrInvalidSize
 	}
@@ -194,7 +193,7 @@ func (gl *GzLog) Size() int64 {
 }
 
 // FileMode returns the UNIX file mode (e.g. 0644)
-func (gl *GzLog) FileMode() fs.FileMode {
+func (gl *GzLog) FileMode() os.FileMode {
 	gl.resetStat()
 	return gl.stat.Mode()
 }
@@ -239,7 +238,7 @@ func (gl *GzLog) rotate() error {
 // If maxSize == 0, the log will never be rotated (i.e. it will essentially have no maximum
 // file size). This defeats the purpose of this package, but I figured I may as well include
 // it anyway
-func OpenFile(basename string, maxSize int, fileMode fs.FileMode) (*GzLog, error) {
+func OpenFile(basename string, maxSize int, fileMode os.FileMode) (*GzLog, error) {
 	if maxSize < 0 {
 		return nil, ErrInvalidSize
 	}
