@@ -17,6 +17,21 @@ const (
 
 // yes I know I'm technically not supposed to rely on I/O for unit tests, but who cares
 
+func mkTestDir(t *testing.T) {
+	t.TempDir()
+	err := os.MkdirAll("logs", 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func delTestDir(t *testing.T) {
+	err := os.RemoveAll("logs")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func populateLog(fn string, text string, t *testing.T) {
 	f, err := os.OpenFile(fn, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 	if err != nil {
@@ -49,7 +64,10 @@ func splitTxt(text string) []string {
 
 func TestContinueLog(t *testing.T) {
 	// write crap to the log file to make sure it uses a file that isn't too big
-	basename := path.Join(t.TempDir(), "gzlog-"+t.Name())
+	mkTestDir(t)
+	defer delTestDir(t)
+
+	basename := path.Join("logs", "gzlog-"+t.Name())
 	generateLogs(basename, t)
 	populateLog(basename+".3.log", "good", t)
 	fn, err := getSuitableFile(basename, 5, 0644)
@@ -62,12 +80,16 @@ func TestContinueLog(t *testing.T) {
 	if fn != expected {
 		t.Fatal(expected, "should be short enough to be usable")
 	}
+	delTestDir(t)
 }
 
 func TestCreateNewLog(t *testing.T) {
 	// write crap to the log file to make sure it uses a file that isn't too big
 	// and creates a new one
-	basename := path.Join(t.TempDir(), "gzlog-"+t.Name())
+	mkTestDir(t)
+	defer delTestDir(t)
+
+	basename := path.Join("logs", "gzlog-"+t.Name())
 	generateLogs(basename, t)
 	populateLog(basename+".3.log", "this is still too big", t)
 	fn, err := getSuitableFile(basename, 5, 0644)
@@ -82,7 +104,10 @@ func TestCreateNewLog(t *testing.T) {
 
 func TestOpenLog(t *testing.T) {
 	// actually test opening a log file and working with it
-	basename := path.Join(t.TempDir(), "gzlog-"+t.Name())
+	mkTestDir(t)
+	defer delTestDir(t)
+
+	basename := path.Join("logs", "gzlog-"+t.Name())
 	gcl, err := OpenFile(basename, maxSize, 0644)
 	if err != nil {
 		t.Fatal(err)
@@ -97,10 +122,14 @@ func TestOpenLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("%s size: %d", gcl.Filename(true), gcl.Size())
+	delTestDir(t)
 }
 
 func TestMaxSize(t *testing.T) {
-	basename := path.Join(t.TempDir(), "gzlog-"+t.Name())
+	mkTestDir(t)
+	defer delTestDir(t)
+
+	basename := path.Join("logs", "gzlog-"+t.Name())
 	gcl, err := OpenFile(basename, 0, 0644)
 	if err != nil {
 		t.Fatal(err)
